@@ -1,0 +1,168 @@
+# Tests for the markdown package - offline, deterministic.
+import std.test
+import "../main.ecko"
+md = main
+
+# A brace-free sample: `{` in a plain string opens an interpolation, so a
+# fixture containing code with braces has to escape them. Keeping the sample
+# free of braces keeps the tests readable.
+DOC = "# Guide\n\nIntro text.\n\n## Install\n\nRun it.\n\n```sh\nnpm i\n```\n\n- one\n- two\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n> quoted\n\n---\n"
+
+test.case("parse returns every block in document order", fn() {
+    kinds = md.parse(DOC) |> map(fn(b) b.kind)
+    test.eq(
+        kinds,
+        ["heading", "paragraph", "heading", "paragraph", "code", "list", "table", "quote", "rule"],
+    )
+})
+
+test.case("headings carry their level", fn() {
+    hs = md.headings(DOC)
+    test.eq(len(hs), 2)
+    test.eq(hs[0].level, 1)
+    test.eq(hs[0].text, "Guide")
+    test.eq(hs[1].level, 2)
+})
+
+test.case("a heading needs a space after the hashes", fn() {
+    test.eq(len(md.headings("#nospace")), 0)
+    test.eq(len(md.headings("# yes")), 1)
+})
+
+test.case("more than six hashes is not a heading", fn() {
+    test.eq(len(md.headings("####### seven")), 0)
+    test.eq(len(md.headings("###### six")), 1)
+})
+
+test.case("code blocks keep their language and body", fn() {
+    cs = md.code_blocks(DOC)
+    test.eq(len(cs), 1)
+    test.eq(cs[0].lang, "sh")
+    test.eq(cs[0].code, "npm i")
+})
+
+test.case("a fence swallows markup that would otherwise parse", fn() {
+    cs = md.code_blocks("```\n# not a heading\n- not a list\n```\n")
+    test.eq(len(cs), 1)
+    test.eq(cs[0].code, "# not a heading\n- not a list")
+    test.eq(len(md.headings("```\n# not a heading\n```\n")), 0)
+})
+
+test.case("tables come back as headers and rows", fn() {
+    t = md.tables(DOC)[0]
+    test.eq(t.headers, ["a", "b"])
+    test.eq(t.rows, [["1", "2"]])
+})
+
+test.case("a pipe in a paragraph is not a table", fn() {
+    test.eq(len(md.tables("this | that, not a table")), 0)
+})
+
+test.case("lists keep their order flag", fn() {
+    test.eq(md.parse("- a\n- b")[0].ordered, false)
+    test.eq(md.parse("1. a\n2. b")[0].ordered, true)
+    test.eq(md.parse("1. a\n2. b")[0].items, ["a", "b"])
+})
+
+test.case("a rule is not a one-item list", fn() {
+    test.eq(md.parse("---")[0].kind, "rule")
+    test.eq(md.parse("- - -")[0].kind, "rule")
+})
+
+test.case("text strips markup and drops code", fn() {
+    out = md.text(
+        "# T\n\nSome **bold** and `code` and [link](http://x.test).\n\n```\nignored\n```\n",
+    )
+    test.eq(contains(out, "bold"), true)
+    test.eq(contains(out, "link"), true)
+    test.eq(contains(out, "**"), false)
+    test.eq(contains(out, "ignored"), false)
+    test.eq(contains(out, "http://x.test"), false)
+})
+
+test.case("sections carry the heading their body sits under", fn() {
+    ss = md.sections(DOC)
+    test.eq(len(ss), 2)
+    test.eq(ss[0].heading, "Guide")
+    test.eq(contains(ss[0].body, "Intro text."), true)
+    test.eq(ss[1].heading, "Install")
+})
+
+test.case("text before the first heading is kept", fn() {
+    ss = md.sections("preamble\n\n# First\n\nbody\n")
+    test.eq(len(ss), 2)
+    test.eq(ss[0].heading, "")
+    test.eq(ss[0].level, 0)
+    test.eq(ss[0].body, "preamble")
+})
+
+test.case("to_html renders the block types", fn() {
+    h = md.to_html(DOC)
+    for want in [
+        "<h1>Guide</h1>",
+        "<h2>Install</h2>",
+        "<ul>",
+        "<li>one</li>",
+        "<table>",
+        "<th>a</th>",
+        "<blockquote>",
+        "<hr>",
+        "<pre><code class=\"language-sh\">npm i</code></pre>",
+    ] {
+        test.eq(contains(h, want), true)
+    }
+})
+
+test.case("inline spans render", fn() {
+    h = md.to_html("a **b** c *d* e `f` g")
+    test.eq(contains(h, "<strong>b</strong>"), true)
+    test.eq(contains(h, "<em>d</em>"), true)
+    test.eq(contains(h, "<code>f</code>"), true)
+})
+
+test.case("an unclosed marker stays literal", fn() {
+    test.eq(contains(md.to_html("a **b"), "<strong>"), false)
+    test.eq(contains(md.to_html("a **b"), "**b"), true)
+})
+
+# --- the ones that matter for rendering somebody else's document ---
+
+test.case("markup in the source is escaped, not emitted", fn() {
+    h = md.to_html("# <script>alert(1)</script>\n\nA <img src=x onerror=y> here.\n")
+    test.eq(contains(h, "<script>"), false)
+    test.eq(contains(h, "&lt;script&gt;"), true)
+    test.eq(contains(h, "onerror"), true)
+    test.eq(contains(h, "<img"), false)
+})
+
+test.case("code block contents are escaped too", fn() {
+    h = md.to_html("```\n<script>bad()</script>\n```\n")
+    test.eq(contains(h, "<script>"), false)
+    test.eq(contains(h, "&lt;script&gt;"), true)
+})
+
+test.case("a javascript: link is refused but its text is kept", fn() {
+    h = md.to_html("[click](javascript:alert)")
+    test.eq(contains(h, "javascript:"), false)
+    test.eq(contains(h, "href"), false)
+    test.eq(contains(h, "click"), true)
+})
+
+test.case("data: and vbscript: are refused too", fn() {
+    test.eq(contains(md.to_html("[a](data:text/html,x)"), "href"), false)
+    test.eq(contains(md.to_html("[a](VBScript:x)"), "href"), false)
+})
+
+test.case("ordinary and relative links still work", fn() {
+    test.eq(contains(md.to_html("[a](http://x.test)"), "href=\"http://x.test\""), true)
+    test.eq(contains(md.to_html("[a](/rel)"), "href=\"/rel\""), true)
+    test.eq(contains(md.to_html("[a](#frag)"), "href=\"#frag\""), true)
+    test.eq(contains(md.to_html("[a](mailto:x@y.z)"), "href=\"mailto:x@y.z\""), true)
+})
+
+test.case("an empty document is an empty list, not an error", fn() {
+    test.eq(md.parse(""), [])
+    test.eq(md.to_html(""), "")
+    test.eq(md.text(""), "")
+    test.eq(md.sections(""), [])
+})

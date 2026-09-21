@@ -1,0 +1,48 @@
+# markdown: what a docs pipeline and a RAG ingest actually do with Markdown.
+import "./main.ecko"
+import std.str
+
+markdown = main
+
+DOC = "# Deploy Guide\n\nRun this before every release.\n\n## Prerequisites\n\nYou need the CLI on PATH.\n\n```sh\ncurl -fsSL https://ecko.sh/install | sh\n```\n\n## Limits\n\n| setting | default |\n|---------|---------|\n| workers | 8 |\n| timeout | 30s |\n"
+
+# Walking is a for loop over blocks - there is no visitor to learn.
+print("Blocks:")
+for b in markdown.parse(DOC) {
+    print("  " + b.kind)
+}
+
+# A table of contents, from the headings.
+print("\nContents:")
+for h in markdown.headings(DOC) {
+    print("  " + str.repeat("  ", h.level - 1) + h.text)
+}
+
+# Every command in the document, without shelling out to a parser.
+print("\nCommands:")
+for c in markdown.code_blocks(DOC) {
+    if c.lang == "sh" { print("  " + c.code) }
+}
+
+# Tables as data, not text.
+print("\nDefaults:")
+for t in markdown.tables(DOC) {
+    for row in t.rows {
+        print("  " + row[0] + " = " + row[1])
+    }
+}
+
+# Chunks for embedding: each one knows the heading it sits under, so a
+# retrieved chunk still says what it is about.
+print("\nChunks:")
+for s in markdown.sections(DOC) {
+    label = if s.heading == "" { "(preamble)" } else { s.heading }
+    print("  " + label + ": " + string(len(s.body)) + " chars")
+}
+
+print("\nHTML:")
+print(
+    markdown.to_html(
+        "## Safe by default\n\n[a link](http://ok.test) and <script>alert(1)</script>\n",
+    ),
+)
