@@ -68,7 +68,7 @@ fn is_table_sep(line) {
 }
 
 fn split_row(line) {
-    t = str.trim(str.trim_prefix(str.trim(line), "|"))
+    mut t = str.trim(str.trim_prefix(str.trim(line), "|"))
     t = str.trim_suffix(t, "|")
     str.split(t, "|") |> map(fn(c) str.trim(c))
 }
