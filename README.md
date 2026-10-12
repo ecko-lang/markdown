@@ -13,6 +13,7 @@ ecko get github.com/ecko-lang/markdown
 ## Usage
 
 ```ecko
+import std.fs
 import markdown
 
 doc = fs.read("guide.md")
